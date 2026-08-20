@@ -18,16 +18,13 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.2.0
 
 # ML / AI
+# chromadb uses its own onnxruntime-based embeddings — sentence-transformers
+# and spacy are optional heavy extras (lazy-loaded at runtime, not at startup).
 chromadb==0.5.23
 google-genai>=1.0.0
-sentence-transformers>=2.7.0
-spacy>=3.7.4
 scikit-learn>=1.4.0
 scipy>=1.12.0
 pandas>=2.0.0
-
-# UI
-streamlit>=1.35.0
 
 # Dev / Test
 pytest==8.3.3

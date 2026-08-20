@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from app.schemas import Question
 from app.schemas.answers import FollowUpRequest
-from app.services.vector_store import vector_store
+from app.services.vector_store import get_vector_store
 from app.config import settings
 
 
@@ -158,7 +158,7 @@ def generate_question(role: str, topic: str, difficulty: str = "Medium") -> Ques
         raise GenerationError("GEMINI_API_KEY environment variable is not set.")
 
     # 1. Smart ChromaDB grounding — always returns something useful
-    grounding_examples, adaptation_notes = vector_store.get_smart_grounding(
+    grounding_examples, adaptation_notes = get_vector_store().get_smart_grounding(
         role=role, topic=topic, difficulty=difficulty, n_results=3
     )
 
@@ -233,7 +233,7 @@ def generate_questions_batch(
         raise GenerationError("GEMINI_API_KEY environment variable is not set.")
 
     # 1. ChromaDB cascade — fetch as many reference examples as available
-    grounding_examples, adaptation_notes = vector_store.get_smart_grounding(
+    grounding_examples, adaptation_notes = get_vector_store().get_smart_grounding(
         role=role, topic=topic, difficulty=difficulty,
         n_results=10,  # grab more examples to give Gemini richer context
     )

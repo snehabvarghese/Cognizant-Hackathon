@@ -11,7 +11,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas.questions import QuestionOut
-from app.services.vector_store import vector_store
+from app.services.vector_store import get_vector_store
 from app.services.question_generation import generate_question, generate_questions_batch, GenerationError
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ def get_topics() -> List[str]:
     Returns all distinct topic names currently stored in ChromaDB.
     Used by the frontend to populate topic dropdowns dynamically.
     """
-    all_questions = vector_store._fetch(n=2000)  # fetch large pool
+    all_questions = get_vector_store()._fetch(n=2000)  # fetch large pool
     topics = sorted(set(q.topic for q in all_questions if q.topic))
     return topics
 
@@ -107,7 +107,7 @@ def next_question(
         )
 
     # --- Attempt 2: ChromaDB bank (Person 1) ---
-    bank = vector_store.get_random_questions(
+    bank = get_vector_store().get_random_questions(
         role=role_filter,
         topic=topic_filter,
         difficulty=difficulty_filter,

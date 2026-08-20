@@ -1,12 +1,33 @@
-import spacy
+# Lazy-loaded spaCy model — loaded on first use to avoid OOM at startup
+_nlp = None
 
-nlp = spacy.load("en_core_web_sm")
+
+def _get_nlp():
+    global _nlp
+    if _nlp is None:
+        try:
+            import spacy as _spacy
+            try:
+                _nlp = _spacy.load("en_core_web_sm")
+            except OSError:
+                _nlp = _spacy.blank("en")
+        except ImportError:
+            # Return a simple stub if spacy is not installed
+            class _Stub:
+                def __call__(self, text):
+                    class _Doc:
+                        noun_chunks = []
+                        ents = []
+                        def __iter__(self): return iter([])
+                    return _Doc()
+            _nlp = _Stub()
+    return _nlp
 
 def extract_concepts(text: str) -> set[str]:
     if not text or not text.strip():
         return set()
 
-    doc = nlp(text)
+    doc = _get_nlp()(text)
 
     concepts = set()
 
@@ -24,7 +45,7 @@ def extract_concepts(text: str) -> set[str]:
 
 def normalize_concept(text: str) -> str:
     text = text.strip()
-    doc = nlp(text)
+    doc = _get_nlp()(text)
 
     words = []
 

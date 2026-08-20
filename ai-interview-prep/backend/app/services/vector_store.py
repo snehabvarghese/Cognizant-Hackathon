@@ -1,9 +1,11 @@
 import random
 import logging
+import hashlib
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 import chromadb
+from chromadb import Documents, EmbeddingFunction, Embeddings
 
 from app.schemas import Question
 
@@ -13,6 +15,31 @@ logger = logging.getLogger(__name__)
 # ChromaDB path
 # ---------------------------------------------------------------------------
 CHROMA_DB_PATH = Path(__file__).resolve().parent.parent.parent / "chroma_db"
+
+
+# ---------------------------------------------------------------------------
+# Lightweight no-op embedding function
+# All queries in this service use metadata `where` filters — NOT semantic
+# vector search. We never call collection.query(query_texts=...).  Using a
+# deterministic hash embedding avoids downloading the default ~90 MB ONNX
+# model on every cold start, which was the main OOM trigger on Render free tier.
+# ---------------------------------------------------------------------------
+class _HashEmbeddingFunction(EmbeddingFunction):
+    """Maps each document to a fixed 64-dim unit vector derived from its SHA-256.
+    Semantically meaningless — only used to satisfy ChromaDB's interface since
+    we query exclusively via `.get(where=...)` not `.query(query_texts=...)`.
+    """
+    DIM = 64
+
+    def __call__(self, input: Documents) -> Embeddings:  # type: ignore[override]
+        results: Embeddings = []
+        for doc in input:
+            digest = hashlib.sha256(doc.encode()).digest()  # 32 bytes
+            # Repeat to fill DIM floats, then normalise to unit vector
+            floats = [b / 255.0 for b in (digest * ((self.DIM // 32) + 1))[: self.DIM]]
+            magnitude = sum(x * x for x in floats) ** 0.5 or 1.0
+            results.append([x / magnitude for x in floats])
+        return results
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +113,8 @@ class VectorStoreService:
         self.client = chromadb.PersistentClient(path=str(db_path))
         self.collection = self.client.get_or_create_collection(
             name="question_bank",
-            metadata={"hnsw:space": "cosine"}
+            metadata={"hnsw:space": "cosine"},
+            embedding_function=_HashEmbeddingFunction(),
         )
 
     # ── Internal fetch helper ────────────────────────────────────────────────
@@ -260,14 +288,28 @@ class VectorStoreService:
 
 
 # ---------------------------------------------------------------------------
-# Singleton instance
+# Lazy singleton — initialized on first access, not at module import time
 # ---------------------------------------------------------------------------
-vector_store = VectorStoreService()
+_vector_store: Optional["VectorStoreService"] = None
+
+
+def _get_vector_store() -> "VectorStoreService":
+    global _vector_store
+    if _vector_store is None:
+        _vector_store = VectorStoreService()
+    return _vector_store
+
+
+# Public alias for external modules
+def get_vector_store() -> "VectorStoreService":
+    """Returns the lazy-initialised VectorStoreService singleton."""
+    return _get_vector_store()
+
 
 
 def get_question(role: str, topic: Optional[str] = None) -> Question:
     """Standard Pod 1 function interface."""
-    return vector_store.get_question(role, topic)
+    return _get_vector_store().get_question(role, topic)
 
 
 def ingest_questions(questions: list[dict]) -> None:
@@ -343,7 +385,7 @@ def ingest_questions(questions: list[dict]) -> None:
 
     try:
         # upsert — safe to call multiple times (idempotent)
-        vector_store.collection.upsert(
+        _get_vector_store().collection.upsert(
             ids=ids,
             documents=documents,
             metadatas=metadatas,

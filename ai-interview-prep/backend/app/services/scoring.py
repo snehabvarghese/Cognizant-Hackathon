@@ -15,15 +15,27 @@ from typing import List, Tuple, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
 # Signal 1: Sentence Transformers & Scikit-Learn
-try:
-    from sentence_transformers import SentenceTransformer
-    import numpy as np
-    _st_model = SentenceTransformer("all-MiniLM-L6-v2")
-    HAS_SENTENCE_TRANSFORMERS = True
-except Exception as e:
-    HAS_SENTENCE_TRANSFORMERS = False
-    _st_model = None
+# Models are loaded LAZILY (on first call) to avoid OOM at startup.
+# ---------------------------------------------------------------------------
+_st_model = None
+_st_available: Optional[bool] = None  # None = not yet checked
+
+
+def _get_st_model():
+    """Return the SentenceTransformer model, loading it lazily on first call."""
+    global _st_model, _st_available
+    if _st_available is None:
+        try:
+            from sentence_transformers import SentenceTransformer
+            _st_model = SentenceTransformer("all-MiniLM-L6-v2")
+            _st_available = True
+        except Exception as e:
+            logger.warning("SentenceTransformer unavailable: %s. Using TF-IDF fallback.", e)
+            _st_available = False
+    return _st_model if _st_available else None
+
 
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -32,16 +44,9 @@ try:
 except ImportError:
     HAS_SKLEARN = False
 
-# Signal 2: spaCy concept extraction
-try:
-    import spacy
-    try:
-        _nlp = spacy.load("en_core_web_sm")
-    except Exception:
-        _nlp = spacy.blank("en")
-    HAS_SPACY = True
-except ImportError:
-    HAS_SPACY = False
+# ---------------------------------------------------------------------------
+# Signal 2: spaCy concept extraction — also lazy via concept_overlap module
+# ---------------------------------------------------------------------------
 
 # Signal 3: Gemini LLM
 try:
@@ -70,10 +75,12 @@ def compute_similarity(text_a: str, text_b: str) -> float:
     if clean_a in TRIVIAL_NON_ANSWERS or len(clean_a) < 2:
         return 0.0
 
-    if HAS_SENTENCE_TRANSFORMERS and _st_model is not None:
+    st_model = _get_st_model()
+    if st_model is not None:
         try:
-            emb_a = _st_model.encode(text_a)
-            emb_b = _st_model.encode(text_b)
+            import numpy as np
+            emb_a = st_model.encode(text_a)
+            emb_b = st_model.encode(text_b)
             norm_a = np.linalg.norm(emb_a)
             norm_b = np.linalg.norm(emb_b)
             if norm_a > 0 and norm_b > 0:
@@ -126,17 +133,6 @@ def concept_match(answer_text: str, reference_answer: str) -> Tuple[float, List[
         pass
 
     concepts = []
-    if HAS_SPACY and _nlp:
-        try:
-            doc = _nlp(reference_answer)
-            if doc.has_annotation("DEP"):
-                for chunk in doc.noun_chunks:
-                    cleaned = chunk.text.strip().lower()
-                    if len(cleaned) > 3 and cleaned not in concepts:
-                        concepts.append(cleaned)
-        except Exception:
-            pass
-
     if not concepts:
         # Regex fallback for technical terms / key words
         words = re.findall(r'\b[A-Za-z\-]{4,}\b', reference_answer)
